@@ -30,9 +30,12 @@ def register(user: UserCreate):
 # /auth/login
 @router.post("/login")
 def login(form_data: OAuth2PasswordRequestForm = Depends()):
-    user = get_user(form_data.username)
+    """
+    Authentifie un utilisateur via email (utiliser le champ `username`) et mot de passe.
+    """
+    user = get_user(form_data.username)  # ici, username = email
     if not user or not verify_password(form_data.password, user.hashed_password):
-        raise HTTPException(status_code=401, detail="Invalid credentials")
+        raise HTTPException(status_code=401, detail="Identifiants invalides")
 
     access_token = create_access_token(
         data={"sub": user.email},

@@ -5,8 +5,13 @@ from datetime import datetime
 
 class PyObjectId(ObjectId):
     @classmethod
-    def __get_validators__(cls):
-        yield cls.validate
+    def __get_pydantic_core_schema__(cls, source, handler):
+        from pydantic_core import core_schema
+        return core_schema.json_or_python_schema(
+            python_schema=core_schema.no_info_plain_validator_function(cls.validate),
+            json_schema=core_schema.no_info_plain_validator_function(cls.validate),
+            serialization=core_schema.plain_serializer_function_ser_schema(str)
+        )
 
     @classmethod
     def validate(cls, v):
@@ -15,10 +20,6 @@ class PyObjectId(ObjectId):
         if not ObjectId.is_valid(v):
             raise ValueError("Invalid ObjectId")
         return ObjectId(v)
-
-    @classmethod
-    def __get_pydantic_json_schema__(cls, core_schema, handler):
-        return {"type": "string"}
 # requis pour l'inscription
 class UserBase(BaseModel):
     email: EmailStr
