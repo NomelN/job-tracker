@@ -32,6 +32,8 @@ class UserInDB(UserBase):
     id: Optional[PyObjectId] = Field(default_factory=PyObjectId, alias="_id")
     hashed_password: str
     created_at: datetime = Field(default_factory=datetime.utcnow)
+    is_verified: bool = False
+
 
     class Config:
         arbitrary_types_allowed = True
