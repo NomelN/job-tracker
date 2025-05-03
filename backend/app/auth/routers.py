@@ -9,8 +9,10 @@ from jose import JWTError, jwt
 from bson import ObjectId
 import os
 from app.auth.auth import generate_email_token, verify_email_token
-from app.utils.email_utils import send_verification_email
+from app.utils.email_utils import send_verification_email, log_user_activity, send_info_email
 from pydantic import BaseModel
+from datetime import datetime
+from typing import List
 
 router = APIRouter()
 
@@ -50,7 +52,7 @@ def verify_email(token: str):
             {"email": email},
             {"$set": {"is_verified": True}}
         )
-        return {"message": "Email vérifié avec succès ✅"}
+        return {"message": "Email vérifié avec succès"}
     except Exception:
         raise HTTPException(status_code=400, detail="Lien de vérification invalide ou expiré")
 
@@ -67,6 +69,12 @@ def login(form_data: OAuth2PasswordRequestForm = Depends()):
     
     if not user.is_verified:
         raise HTTPException(status_code=403, detail="Adresse email non vérifiée")
+    
+    users_collection.update_one(
+        {"email": user.email},
+        {"$set": {"last_login": datetime.utcnow()}}
+    )
+    log_user_activity(user.email, "Connexion")
 
     access_token = create_access_token(
         data={"sub": user.email},
@@ -141,17 +149,36 @@ class ChangePasswordRequest(BaseModel):
     new_password: str
 
 @router.post("/change-password")
-def change_password(data: ChangePasswordRequest, current_user: UserInDB = Depends(get_current_user)):
+async def change_password(data: ChangePasswordRequest, current_user: UserInDB = Depends(get_current_user)):
     if not verify_password(data.old_password, current_user.hashed_password):
         raise HTTPException(status_code=400, detail="Mot de passe actuel incorrect")
 
     new_hashed = hash_password(data.new_password)
     users_collection.update_one({"email": current_user.email}, {"$set": {"hashed_password": new_hashed}})
+
+    log_user_activity(current_user.email, "Changement de mot de passe")
+    await send_info_email(
+        current_user.email,
+        "Mot de passe modifié",
+        "Votre mot de passe a été modifié avec succès."
+    )
     return {"message": "Mot de passe mis à jour"}
 
 @router.delete("/delete-account")
-def delete_account(current_user: UserInDB = Depends(get_current_user)):
+async def delete_account(current_user: UserInDB = Depends(get_current_user)):
+    await send_info_email(
+        current_user.email,
+        "Compte supprimé",
+        "Votre compte a été supprimé de notre système. Nous espérons vous revoir bientôt."
+    )
+    log_user_activity(current_user.email, "Suppression du compte")
+
     result = users_collection.delete_one({"email": current_user.email})
     if result.deleted_count == 1:
         return {"message": "Compte supprimé avec succès"}
     raise HTTPException(status_code=404, detail="Utilisateur introuvable")
+
+@router.get("/activity-log", response_model=List[dict])
+def get_activity_log(current_user: UserInDB = Depends(get_current_user)):
+    user = users_collection.find_one({"email": current_user.email})
+    return user.get("activity_log", [])
