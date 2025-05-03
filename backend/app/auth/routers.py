@@ -10,6 +10,7 @@ from bson import ObjectId
 import os
 from app.auth.auth import generate_email_token, verify_email_token
 from app.utils.email_utils import send_verification_email
+from pydantic import BaseModel
 
 router = APIRouter()
 
@@ -63,6 +64,9 @@ def login(form_data: OAuth2PasswordRequestForm = Depends()):
     user = get_user(form_data.username)  # ici, username = email
     if not user or not verify_password(form_data.password, user.hashed_password):
         raise HTTPException(status_code=401, detail="Identifiants invalides")
+    
+    if not user.is_verified:
+        raise HTTPException(status_code=403, detail="Adresse email non vérifiée")
 
     access_token = create_access_token(
         data={"sub": user.email},
@@ -97,9 +101,57 @@ def read_users_me(current_user: UserInDB = Depends(get_current_user)):
 
 # /auth/forgot-password (mock pour l'instant)
 @router.post("/forgot-password")
-def forgot_password(email: str):
+async def forgot_password(email: str):
     user = get_user(email)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     # En vrai : générer un token unique et envoyer un mail
-    return {"message": f"Un lien de réinitialisation a été envoyé à {email} (simulé)."}
+    token = generate_email_token(email)
+    await send_verification_email(email, token)
+    return {"message": f"Un lien de réinitialisation a été envoyé à {email}."}
+
+class ResetPasswordRequest(BaseModel):
+    token: str
+    new_password: str
+
+@router.post("/reset-password")
+def reset_password(data: ResetPasswordRequest):
+    try:
+        email = verify_email_token(data.token)
+        user = get_user(email)
+        if not user:
+            raise HTTPException(status_code=404, detail="Utilisateur introuvable")
+
+        hashed = hash_password(data.new_password)
+        users_collection.update_one(
+            {"email": email},
+            {"$set": {"hashed_password": hashed}}
+        )
+        return {"message": "Mot de passe réinitialisé avec succès"}
+    except Exception:
+        raise HTTPException(status_code=400, detail="Lien invalide ou expiré")
+
+@router.put("/update-name")
+def update_name(new_name: str, current_user: UserInDB = Depends(get_current_user)):
+    users_collection.update_one({"email": current_user.email}, {"$set": {"full_name": new_name}})
+    return {"message": "Nom mis à jour"}
+
+class ChangePasswordRequest(BaseModel):
+    old_password: str
+    new_password: str
+
+@router.post("/change-password")
+def change_password(data: ChangePasswordRequest, current_user: UserInDB = Depends(get_current_user)):
+    if not verify_password(data.old_password, current_user.hashed_password):
+        raise HTTPException(status_code=400, detail="Mot de passe actuel incorrect")
+
+    new_hashed = hash_password(data.new_password)
+    users_collection.update_one({"email": current_user.email}, {"$set": {"hashed_password": new_hashed}})
+    return {"message": "Mot de passe mis à jour"}
+
+@router.delete("/delete-account")
+def delete_account(current_user: UserInDB = Depends(get_current_user)):
+    result = users_collection.delete_one({"email": current_user.email})
+    if result.deleted_count == 1:
+        return {"message": "Compte supprimé avec succès"}
+    raise HTTPException(status_code=404, detail="Utilisateur introuvable")
