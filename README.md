@@ -46,7 +46,7 @@ cp .env.example .env
 
 5. Démarrez le serveur de développement :
 ```bash
-uvicorn main:app --reload
+uvicorn app.main:app --reload
 ```
 
 ### Frontend
